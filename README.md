@@ -2,6 +2,10 @@
 
 Rosterly is a shift-planning MVP with a browser preview and a same-origin Node.js/PostgreSQL backend. The backend supports account registration/sign-in, workspace-scoped staff and settings, and saved weekly draft schedules.
 
+## License
+
+This project is licensed under the MIT License. See [LICENSE](./LICENSE) for details.
+
 ## Requirements
 
 - Node.js 22.12 or later
