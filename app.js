@@ -161,6 +161,37 @@ async function loadWeeklySchedule() {
   renderSchedule();
 }
 
+async function loadNotifications(markRead = false) {
+  const result = await apiRequest('/api/notifications');
+  const list = document.querySelector('#notification-list');
+  const empty = document.querySelector('#notifications-empty');
+  const button = document.querySelector('#notifications-button');
+  const notifications = result.notifications;
+  list.innerHTML = notifications.map(notification => `
+    <article class="notification-item ${notification.readAt ? '' : 'unread'}">
+      <strong>${escapeHTML(notification.title)}</strong>
+      <p>${escapeHTML(notification.message)}</p>
+      <time datetime="${escapeHTML(notification.createdAt)}">${escapeHTML(dateLabel(new Date(notification.createdAt), {
+        day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit'
+      }))}</time>
+    </article>
+  `).join('');
+  empty.hidden = notifications.length > 0;
+  button.querySelector('i').hidden = result.unreadCount === 0;
+
+  if (markRead) {
+    const unreadIds = notifications.filter(notification => !notification.readAt).map(notification => notification.id);
+    if (unreadIds.length) {
+      await apiRequest('/api/notifications/read', {
+        method: 'POST',
+        body: JSON.stringify({ ids: unreadIds })
+      });
+      list.querySelectorAll('.notification-item.unread').forEach(item => item.classList.remove('unread'));
+      button.querySelector('i').hidden = result.unreadCount <= unreadIds.length;
+    }
+  }
+}
+
 async function saveWeeklySchedule() {
   if (location.protocol === 'file:' || !state.user) return;
   const assignmentBySlot = new Map(state.assignments.map(assignment => [
@@ -202,18 +233,25 @@ async function loadWorkspace() {
   document.querySelector('#industry').value = settings.industry;
   weeklyCapInput.value = settings.weeklyHoursCap;
   restHoursInput.value = settings.minimumRestHours;
+  document.querySelector('#automation-enabled').checked = settings.automationEnabled;
+  document.querySelector('#automation-day').value = settings.automationDay;
+  document.querySelector('#automation-time').value = settings.automationTime;
+  document.querySelector('#automation-timezone').value = settings.automationTimezone;
+  setAutomationInputsEnabled();
   document.querySelector('h1').innerHTML = `Good morning, ${escapeHTML(state.user.email.split('@')[0])} <span>✳</span>`;
   document.querySelector('.workspace-name').innerHTML = `${escapeHTML(state.user.workspace.name)}<small>Operations team</small>`;
   document.querySelector('.workspace-avatar').textContent = state.user.workspace.name.trim()[0].toUpperCase();
   document.querySelector('.profile-name').innerHTML = `${escapeHTML(state.user.email)}<small>Workspace admin</small>`;
   document.querySelector('.profile-avatar').textContent = initialsFor(state.user.email);
   document.querySelector('#logout-button').hidden = false;
+  document.querySelector('#notifications-button').hidden = false;
   document.body.classList.remove('auth-required');
   document.querySelector('#auth-screen').hidden = true;
   state.assignments = [];
   state.generated = false;
   renderSchedule();
   await loadWeeklySchedule();
+  await loadNotifications().catch(error => showToast(error.message));
 }
 
 async function initializeApiMode() {
@@ -329,47 +367,31 @@ function formatHour(hour) {
 function generateSchedule() {
   const weeklyCap = Number(weeklyCapInput.value);
   const minimumRest = Number(restHoursInput.value);
-  if (!Number.isFinite(weeklyCap) || weeklyCap < 8 || weeklyCap > 60) {
-    showToast('Weekly hours cap must be between 8 and 60.');
+  if (!Number.isInteger(weeklyCap) || weeklyCap < 8 || weeklyCap > 60) {
+    showToast('Weekly hours cap must be a whole number between 8 and 60.');
     weeklyCapInput.focus();
     return;
   }
-  if (!Number.isFinite(minimumRest) || minimumRest < 8 || minimumRest > 24) {
-    showToast('Minimum rest must be between 8 and 24 hours.');
+  if (!Number.isInteger(minimumRest) || minimumRest < 8 || minimumRest > 24) {
+    showToast('Minimum rest must be a whole number between 8 and 24 hours.');
     restHoursInput.focus();
     return;
   }
 
-  const hoursByPerson = state.staff.map(() => 0);
-  const lastShiftByPerson = state.staff.map(() => null);
-  const assignments = [];
-  const slots = DAYS.flatMap((_, day) => SHIFTS.map(shift => ({ day, shift })));
-
-  slots.forEach(({ day, shift }) => {
-    const eligible = state.staff.map((person, staffIndex) => {
-      if (person.unavailable.includes(day)) return null;
-      if (hoursByPerson[staffIndex] + 8 > weeklyCap) return null;
-
-      const last = lastShiftByPerson[staffIndex];
-      if (last) {
-        const hoursSinceEnd = (day - last.day) * 24 + shift.start - last.end;
-        if (hoursSinceEnd < minimumRest) return null;
-      }
-
-      return { staffIndex, hours: hoursByPerson[staffIndex] };
-    }).filter(Boolean).sort((a, b) => a.hours - b.hours || a.staffIndex - b.staffIndex);
-
-    if (eligible.length === 0) return;
-    const { staffIndex } = eligible[0];
-    assignments.push({ day, shift: shift.key, staffIndex });
-    hoursByPerson[staffIndex] += 8;
-    lastShiftByPerson[staffIndex] = { day, end: shift.end };
-  });
-
-  state.assignments = assignments;
+  const staffIndexes = new Map(state.staff.map((member, index) => [member.id, index]));
+  const shifts = window.RosterlySchedule.generateWeeklyShifts(
+    state.staff.map(member => ({ id: member.id, unavailableDays: member.unavailable })),
+    { weeklyHoursCap: weeklyCap, minimumRestHours: minimumRest }
+  );
+  state.assignments = shifts.filter(shift => shift.memberId && staffIndexes.has(shift.memberId))
+    .map(shift => ({
+      day: shift.dayIndex,
+      shift: shift.shiftKey,
+      staffIndex: staffIndexes.get(shift.memberId)
+    }));
   state.generated = true;
   renderSchedule();
-  const openCount = slots.length - assignments.length;
+  const openCount = shifts.length - state.assignments.length;
   document.querySelector('#schedule-message').textContent = openCount
     ? `${openCount} shift${openCount === 1 ? '' : 's'} still need coverage. Adjust availability or limits and generate again.`
     : `Draft generated. Review the coverage and planning checks before publishing.`;
@@ -475,9 +497,20 @@ function updatePlanningSettings() {
         countryCode: COUNTRY_CODES[countrySelect.value] || 'ZZ',
         industry: document.querySelector('#industry').value,
         weeklyHoursCap: Number(weeklyCapInput.value),
-        minimumRestHours: Number(restHoursInput.value)
+        minimumRestHours: Number(restHoursInput.value),
+        automationEnabled: document.querySelector('#automation-enabled').checked,
+        automationDay: Number(document.querySelector('#automation-day').value),
+        automationTime: document.querySelector('#automation-time').value,
+        automationTimezone: document.querySelector('#automation-timezone').value.trim()
       })
     }).catch(error => showToast(error.message));
+  }
+}
+
+function setAutomationInputsEnabled() {
+  const enabled = document.querySelector('#automation-enabled').checked;
+  for (const selector of ['#automation-day', '#automation-time', '#automation-timezone']) {
+    document.querySelector(selector).disabled = !enabled;
   }
 }
 
@@ -520,6 +553,30 @@ countrySelect.addEventListener('change', updatePlanningSettings);
 document.querySelector('#industry').addEventListener('change', updatePlanningSettings);
 weeklyCapInput.addEventListener('change', updatePlanningSettings);
 restHoursInput.addEventListener('change', updatePlanningSettings);
+document.querySelector('#automation-enabled').addEventListener('change', () => {
+  setAutomationInputsEnabled();
+  updatePlanningSettings();
+});
+document.querySelector('#automation-day').addEventListener('change', updatePlanningSettings);
+document.querySelector('#automation-time').addEventListener('change', updatePlanningSettings);
+document.querySelector('#automation-timezone').addEventListener('change', updatePlanningSettings);
+document.querySelector('#notifications-button').addEventListener('click', async () => {
+  const panel = document.querySelector('#notification-panel');
+  const isOpening = panel.hidden;
+  panel.hidden = !isOpening;
+  document.querySelector('#notifications-button').setAttribute('aria-expanded', String(isOpening));
+  if (isOpening) {
+    try {
+      await loadNotifications(true);
+    } catch (error) {
+      showToast(error.message);
+    }
+  }
+});
+document.querySelector('#close-notifications').addEventListener('click', () => {
+  document.querySelector('#notification-panel').hidden = true;
+  document.querySelector('#notifications-button').setAttribute('aria-expanded', 'false');
+});
 document.querySelector('#invite-button').addEventListener('click', () => {
   document.querySelector('#member-dialog').showModal();
   document.querySelector('#member-name').focus();
@@ -596,6 +653,8 @@ document.querySelector('#logout-button').addEventListener('click', async () => {
     state.user = null;
     state.staff = [];
     state.assignments = [];
+    document.querySelector('#notifications-button').hidden = true;
+    document.querySelector('#notification-panel').hidden = true;
     showAuthScreen('login', 'You have signed out.');
   } catch (error) {
     showToast(error.message);

@@ -32,6 +32,7 @@ This project is licensed under the MIT License. See [LICENSE](./LICENSE) for det
 - Passwords use salted scrypt hashes. Sessions use random opaque tokens stored as hashes and HttpOnly, SameSite cookies. In production, set `NODE_ENV=production` behind HTTPS so cookies are Secure. If TLS terminates at a trusted reverse proxy, configure `TRUST_PROXY=1` only when that proxy overwrites forwarded headers.
 - Data is isolated by workspace in PostgreSQL. Staff, availability, planning settings, and weekly draft assignments sync to the server.
 - Schedule generation remains a simple greedy prototype with fixed 08:00–16:00 / 16:00–00:00 shifts. Drafts are not published or optimized.
+- Weekly draft automation defaults to Sunday at 09:00 Asia/Kolkata. It creates an editable draft for the upcoming week and adds an in-app notification for workspace users; it does not publish schedules or contact staff. The Node.js server must stay running to run on time, and it checks for overdue runs after restarting.
 - The database includes a versioned legal-rule-profile structure, but **no country or industry labor-law profiles are supplied or verified**. A profile cannot be marked active unless reviewer and source metadata are present; that database check is not legal validation. No compliance determination or legal advice is provided.
 
 ## Not production-ready

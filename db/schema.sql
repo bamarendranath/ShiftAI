@@ -5,9 +5,20 @@ CREATE TABLE IF NOT EXISTS workspaces (
   industry TEXT NOT NULL DEFAULT 'Restaurant & food service',
   weekly_hours_cap SMALLINT NOT NULL DEFAULT 40 CHECK (weekly_hours_cap BETWEEN 8 AND 60),
   minimum_rest_hours SMALLINT NOT NULL DEFAULT 11 CHECK (minimum_rest_hours BETWEEN 8 AND 24),
+  automation_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  automation_day SMALLINT NOT NULL DEFAULT 0 CHECK (automation_day BETWEEN 0 AND 6),
+  automation_time TIME NOT NULL DEFAULT '09:00',
+  automation_timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+  automation_next_run_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS automation_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS automation_day SMALLINT NOT NULL DEFAULT 0 CHECK (automation_day BETWEEN 0 AND 6);
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS automation_time TIME NOT NULL DEFAULT '09:00';
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS automation_timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata';
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS automation_next_run_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -88,3 +99,17 @@ CREATE TABLE IF NOT EXISTS schedule_shifts (
 
 CREATE INDEX IF NOT EXISTS schedules_workspace_week_idx ON schedules(workspace_id, week_start);
 CREATE INDEX IF NOT EXISTS schedule_shifts_schedule_idx ON schedule_shifts(schedule_id);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  schedule_id UUID NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+  title TEXT NOT NULL CHECK (char_length(title) BETWEEN 1 AND 120),
+  message TEXT NOT NULL CHECK (char_length(message) BETWEEN 1 AND 500),
+  read_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (user_id, schedule_id)
+);
+
+CREATE INDEX IF NOT EXISTS notifications_user_created_idx ON notifications(user_id, created_at DESC);

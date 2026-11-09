@@ -57,6 +57,17 @@ body.api-mode.auth-required .app-shell { display: none; }
 .live-dot, .check-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #43a77a; }
 .icon-button { position: relative; width: 30px; height: 30px; border: 1px solid #e9ece8; border-radius: 9px; background: white; color: #6f7872; font-size: 14px; }
 .icon-button i { position: absolute; top: 5px; right: 6px; width: 5px; height: 5px; border-radius: 50%; background: #e88961; }
+.notification-menu { position: relative; }
+.notification-panel { position: absolute; z-index: 8; top: 39px; right: 0; width: min(340px, calc(100vw - 32px)); max-height: 390px; padding: 14px; overflow-y: auto; border: 1px solid #e7ece7; border-radius: 10px; background: #fff; box-shadow: 0 12px 32px #2533291c; }
+.notification-panel[hidden] { display: none; }
+.notification-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; color: #39423b; font-size: 12px; }
+.notification-item { padding: 11px 2px; border-top: 1px solid #eef0ed; }
+.notification-item.unread { border-left: 2px solid #58a67b; padding-left: 8px; }
+.notification-item strong { display: block; color: #39423b; font-size: 10px; }
+.notification-item p, .notification-item time, .notifications-empty { display: block; margin: 5px 0 0; color: #858e87; font-size: 9px; line-height: 1.5; }
+.notification-item time { color: #a0a7a1; font-size: 8px; }
+.notifications-empty { padding: 12px 0; }
+.notifications-empty[hidden] { display: none; }
 .avatar-small { flex-basis: 30px; height: 30px; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; margin: 29px 0 21px; }
 .eyebrow { margin: 0 0 8px; color: #929a94; font-size: 9px; font-weight: 700; letter-spacing: 1px; }
@@ -158,6 +169,22 @@ h2 { margin: 0; font: 700 13px Arial, sans-serif; letter-spacing: -.2px; }
 .number-input { display: flex; align-items: center; width: 91px; height: 30px; border: 1px solid #e8ece8; border-radius: 6px; }
 .number-input input { width: 53px; padding-left: 8px; border: 0; outline: 0; color: #4b554d; font-size: 10px; }
 .number-input span { color: #9ba29d; font-size: 8px; }
+.automation-controls { margin-top: 18px; padding-top: 14px; border-top: 1px solid #eef0ed; }
+.automation-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.automation-heading h3 { margin: 0; color: #4d5850; font-size: 10px; }
+.automation-heading p { margin: 4px 0 0; color: #939b95; font-size: 8px; line-height: 1.4; }
+.automation-switch { position: relative; flex: 0 0 34px; width: 34px; height: 19px; }
+.automation-switch input { width: 1px; height: 1px; opacity: 0; }
+.automation-switch span { position: absolute; inset: 0; border-radius: 12px; background: #d9ded9; cursor: pointer; transition: .15s ease; }
+.automation-switch span::before { position: absolute; top: 3px; left: 3px; width: 13px; height: 13px; border-radius: 50%; background: #fff; content: ''; transition: .15s ease; }
+.automation-switch input:checked + span { background: #58a67b; }
+.automation-switch input:checked + span::before { transform: translateX(15px); }
+.automation-switch input:focus-visible + span { outline: 2px solid #286d50; outline-offset: 2px; }
+.automation-time { display: block; }
+.automation-timezone { display: block; }
+.automation-note { margin: 9px 0 0; color: #939b95; font-size: 8px; line-height: 1.55; }
+body:not(.api-mode) .automation-controls { display: none; }
+.automation-controls :disabled { opacity: .6; }
 .legal-note { display: flex; gap: 8px; margin-top: 17px; padding: 10px; border: 1px solid #f1e7d6; border-radius: 7px; background: #fffcf6; }
 .note-icon { display: grid; flex: 0 0 14px; width: 14px; height: 14px; place-items: center; border-radius: 50%; background: #f3e7d2; color: #9b733b; font: 700 9px Georgia, serif; }
 .legal-note p { margin: 0; color: #8d826e; font-size: 8px; line-height: 1.55; }
@@ -255,6 +282,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .content-grid { grid-template-columns: 1fr; }
   .rules-panel { display: grid; grid-template-columns: 1fr 1fr; column-gap: 14px; }
   .rules-heading, .legal-note, .edit-rules-link { grid-column: 1 / -1; }
+  .automation-controls { grid-column: 1 / -1; }
   .rules-heading { margin-bottom: 7px; }
   .rules-panel > .field-label:first-of-type, .rules-panel > .select-field:first-of-type { grid-column: 1; }
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

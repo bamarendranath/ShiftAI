@@ -4,14 +4,18 @@ import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import pg from 'pg';
+import { startWeeklyAutomation, validateAutomationSettings } from './weekly-automation.mjs';
 
 const { Pool } = pg;
+const require = createRequire(import.meta.url);
+const { nextAutomationDate } = require('./schedule-core.cjs');
 const scrypt = promisify(scryptCallback);
 const root = fileURLToPath(new URL('.', import.meta.url));
 const MAX_BODY_BYTES = 64 * 1024;
 const SESSION_COOKIE = 'rosterly_session';
-const PUBLIC_FILES = new Set(['index.html', 'app.js', 'styles.css']);
+const PUBLIC_FILES = new Set(['index.html', 'app.js', 'schedule-core.cjs', 'styles.css']);
 
 export function normalizeEmail(email) {
   if (typeof email !== 'string') return null;
@@ -384,10 +388,43 @@ export function createApp({ pool, secureCookies = process.env.NODE_ENV === 'prod
 
     if (request.method === 'GET' && url.pathname === '/api/settings') {
       const result = await pool.query(
-        'SELECT country_code AS "countryCode", industry, weekly_hours_cap AS "weeklyHoursCap", minimum_rest_hours AS "minimumRestHours" FROM workspaces WHERE id = $1',
+        `SELECT country_code AS "countryCode", industry,
+                weekly_hours_cap AS "weeklyHoursCap", minimum_rest_hours AS "minimumRestHours",
+                automation_enabled AS "automationEnabled", automation_day AS "automationDay",
+                to_char(automation_time, 'HH24:MI') AS "automationTime",
+                automation_timezone AS "automationTimezone"
+         FROM workspaces WHERE id = $1`,
         [user.workspace_id]
       );
       return sendJson(response, 200, { settings: result.rows[0] });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/notifications') {
+      const [notifications, unread] = await Promise.all([
+        pool.query(
+          `SELECT id, title, message, created_at AS "createdAt", read_at AS "readAt"
+           FROM notifications WHERE user_id = $1 ORDER BY created_at DESC LIMIT 25`,
+          [user.user_id]
+        ),
+        pool.query('SELECT count(*)::int AS count FROM notifications WHERE user_id = $1 AND read_at IS NULL', [user.user_id])
+      ]);
+      return sendJson(response, 200, { notifications: notifications.rows, unreadCount: unread.rows[0].count });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/notifications/read') {
+      if (!sameOrigin(request)) return sendJson(response, 403, { error: 'Request origin was not accepted.' });
+      const body = await parseBody(request);
+      if (!Array.isArray(body.ids) || body.ids.length > 25 ||
+          body.ids.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id))) {
+        return sendJson(response, 400, { error: 'Notification IDs must be valid.' });
+      }
+      if (body.ids.length) {
+        await pool.query(
+          'UPDATE notifications SET read_at = now() WHERE user_id = $1 AND id = ANY($2::uuid[]) AND read_at IS NULL',
+          [user.user_id, body.ids]
+        );
+      }
+      return sendJson(response, 200, { ok: true });
     }
 
     if (request.method === 'GET' && url.pathname === '/api/schedules') {
@@ -470,17 +507,40 @@ export function createApp({ pool, secureCookies = process.env.NODE_ENV === 'prod
       const industry = typeof body.industry === 'string' ? body.industry.trim() : '';
       const weeklyHoursCap = Number(body.weeklyHoursCap);
       const minimumRestHours = Number(body.minimumRestHours);
+      const automation = validateAutomationSettings({
+        automationEnabled: body.automationEnabled,
+        automationDay: body.automationDay,
+        automationTime: body.automationTime,
+        automationTimezone: body.automationTimezone
+      });
       if (!/^[A-Z]{2}$/.test(countryCode) || !industry || industry.length > 100 ||
           !Number.isInteger(weeklyHoursCap) || weeklyHoursCap < 8 || weeklyHoursCap > 60 ||
-          !Number.isInteger(minimumRestHours) || minimumRestHours < 8 || minimumRestHours > 24) {
-        return sendJson(response, 400, { error: 'Check country, industry, weekly-hours cap, and minimum rest.' });
+          !Number.isInteger(minimumRestHours) || minimumRestHours < 8 || minimumRestHours > 24 || !automation) {
+        return sendJson(response, 400, { error: 'Check country, industry, planning limits, and weekly automation settings.' });
+      }
+      let nextRunAt = null;
+      if (automation.automationEnabled) {
+        nextRunAt = nextAutomationDate(
+          automation.automationDay,
+          automation.automationTime,
+          automation.automationTimezone
+        );
       }
       const settings = await inTransaction(pool, async client => {
         const result = await client.query(
           `UPDATE workspaces SET country_code = $1, industry = $2, weekly_hours_cap = $3,
-           minimum_rest_hours = $4, updated_at = now() WHERE id = $5
-           RETURNING country_code AS "countryCode", industry, weekly_hours_cap AS "weeklyHoursCap", minimum_rest_hours AS "minimumRestHours"`,
-          [countryCode, industry, weeklyHoursCap, minimumRestHours, user.workspace_id]
+           minimum_rest_hours = $4, automation_enabled = $5, automation_day = $6,
+           automation_time = $7, automation_timezone = $8, automation_next_run_at = $9,
+           updated_at = now() WHERE id = $10
+           RETURNING country_code AS "countryCode", industry, weekly_hours_cap AS "weeklyHoursCap",
+                     minimum_rest_hours AS "minimumRestHours", automation_enabled AS "automationEnabled",
+                     automation_day AS "automationDay", to_char(automation_time, 'HH24:MI') AS "automationTime",
+                     automation_timezone AS "automationTimezone"`,
+          [
+            countryCode, industry, weeklyHoursCap, minimumRestHours, automation.automationEnabled,
+            automation.automationDay, automation.automationTime, automation.automationTimezone,
+            nextRunAt, user.workspace_id
+          ]
         );
         await client.query('UPDATE schedules SET is_stale = TRUE, updated_at = now() WHERE workspace_id = $1', [user.workspace_id]);
         return result.rows[0];
@@ -505,7 +565,12 @@ export function createApp({ pool, secureCookies = process.env.NODE_ENV === 'prod
       if (!PUBLIC_FILES.has(requestedPath)) return sendJson(response, 404, { error: 'Not found.' });
       const filePath = join(root, requestedPath);
       const content = await readFile(filePath);
-      const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8' };
+      const types = {
+        '.html': 'text/html; charset=utf-8',
+        '.css': 'text/css; charset=utf-8',
+        '.js': 'text/javascript; charset=utf-8',
+        '.cjs': 'text/javascript; charset=utf-8'
+      };
       response.writeHead(200, {
         'Content-Type': types[extname(filePath)] || 'application/octet-stream',
         'X-Content-Type-Options': 'nosniff',
@@ -530,9 +595,11 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 });
   const port = Number(process.env.PORT) || 3000;
   const server = createApp({ pool });
+  const stopAutomation = startWeeklyAutomation(pool);
   server.listen(port, () => console.log(`Rosterly is listening on http://localhost:${port}`));
   for (const signal of ['SIGINT', 'SIGTERM']) {
     process.on(signal, () => server.close(async () => {
+      stopAutomation();
       await pool.end();
       process.exit(0);
     }));
