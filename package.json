@@ -1,0 +1,17 @@
+{
+  "name": "rosterly",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server.mjs",
+    "migrate": "node --env-file-if-exists=.env scripts/migrate.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}
